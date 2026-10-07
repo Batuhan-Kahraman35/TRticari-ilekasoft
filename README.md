@@ -61,7 +61,7 @@ ticari.ornekproje.com/
 **Batuhan Kahraman**
 - 📧 gelistirici@ornekproje.com.tr
 - 📞 +90 500 000 00 01
-- 🔗 [GitHub](https://github.com/Batuhan-Kahraman/)
+- 🔗 [GitHub](https://github.com/Batuhan-Kahraman35)
 
 ## 📝 Lisans
 
