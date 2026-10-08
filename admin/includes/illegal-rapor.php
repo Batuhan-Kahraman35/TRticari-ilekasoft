@@ -21,6 +21,10 @@ if (!isset($illegalRaporSatildi)) {
 /** Tek statüye sabitlenmiş rapor (0 = kapalı) */
 $illegalRaporStatuId = (int)($illegalRaporStatuId ?? 0);
 
+/** Rapordan dışlanan statüler (örn. kendi sayfası olan Almayan İllegaller statüsü) */
+$illegalRaporHaricStatuIdler = array_values(array_filter(array_map('intval', (array)($illegalRaporHaricStatuIdler ?? []))));
+$haricStatuListe = implode(',', $illegalRaporHaricStatuIdler);
+
 /** CSV dosya adı öneki; çağıran sayfa verebilir */
 $illegalRaporDosyaOnek = $illegalRaporDosyaOnek
     ?? ($illegalRaporSatildi ? 'satilan-illegaller' : 'satilmayan-illegaller');
@@ -115,6 +119,10 @@ if ($illegalRaporStatuId > 0) {
     $satildiKosul = $illegalRaporSatildi
         ? " AND st.statu_ad LIKE '%SATILDI%'"
         : " AND (st.statu_ad IS NULL OR st.statu_ad NOT LIKE '%SATILDI%')";
+
+    if ($haricStatuListe !== '') {
+        $satildiKosul .= " AND ISNULL(t.takip_statu_id, 0) NOT IN (" . $haricStatuListe . ")";
+    }
 }
 
 // "Kendi Kullanicisini Gor" yetkisi: kayıt sahibi veya carinin sözleşmesindeki personel
@@ -305,7 +313,8 @@ $statuler = $db->fetchAll("
     WHERE Durum = 1 AND statu_cari_tipi_id = ?" .
     ($illegalRaporStatuId > 0
         ? " AND statu_id = " . $illegalRaporStatuId
-        : ($illegalRaporSatildi ? " AND statu_ad LIKE '%SATILDI%'" : " AND statu_ad NOT LIKE '%SATILDI%'")) . "
+        : ($illegalRaporSatildi ? " AND statu_ad LIKE '%SATILDI%'" : " AND statu_ad NOT LIKE '%SATILDI%'")
+          . ($haricStatuListe !== '' ? " AND statu_id NOT IN (" . $haricStatuListe . ")" : "")) . "
     ORDER BY statu_sira
 ", [$cariTipiId]);
 

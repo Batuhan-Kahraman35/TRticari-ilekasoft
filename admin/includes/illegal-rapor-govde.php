@@ -55,6 +55,17 @@ $raporIkon = $illegalRaporSatildi ? 'bi-cash-coin' : 'bi-exclamation-triangle';
             <div class="app-content">
                 <div class="container-fluid">
 
+                    <!-- Rapora dahil statüler (filtre dropdown'u ile aynı kaynak) -->
+                    <div class="alert alert-light border d-flex flex-wrap align-items-center gap-2 py-2 mb-3">
+                        <span class="fw-semibold me-1"><i class="bi bi-info-circle text-primary"></i> Bu rapordaki statüler:</span>
+                        <?php foreach ($statuler as $st): ?>
+                        <span class="badge text-bg-secondary fw-normal"><?= htmlspecialchars($st['statu_ad']) ?></span>
+                        <?php endforeach; ?>
+                        <?php if (!$illegalRaporSatildi && $illegalRaporStatuId === 0): ?>
+                        <span class="badge text-bg-light border fw-normal fst-italic">Statüsü atanmamış</span>
+                        <?php endif; ?>
+                    </div>
+
                     <!-- Info Boxes -->
                     <div class="row mb-3">
                         <div class="col-12 col-sm-6 col-md-3">
