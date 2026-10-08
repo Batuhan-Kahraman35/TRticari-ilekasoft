@@ -1370,9 +1370,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                     }
                                                ?>" placeholder="0,00" disabled>
                                     </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label fw-bold text-success">Toplam Ödenen</label>
+                                        <input type="text" class="form-control text-end fw-bold text-success" id="takip_toplam_odenen" placeholder="0,00" disabled>
+                                    </div>
                                     <div class="col-md-8">
                                         <label class="form-label">Açıklama</label>
                                         <textarea class="form-control" name="takip_aciklama" id="takip_aciklama" rows="3" style="resize: vertical;"><?= htmlspecialchars($takip['takip_aciklama'] ?? '') ?></textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label fw-bold text-danger">Kalan Alacak</label>
+                                        <input type="text" class="form-control text-end fw-bold text-danger" id="takip_kalan_alacak" placeholder="0,00" disabled>
                                     </div>
                                 </div>
                             </div>
@@ -2206,6 +2214,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    + parseTutar($('#masraf').val())
                    + parseTutar($('#tahsil_harci').val());
         $('#toplam_alacak').val(toplam.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        calculateKalanAlacak();
+    }
+
+    // Kalan Alacak = Toplam Alacak - Toplam Ödenen (yapıldı işaretli ödeme satırları)
+    function calculateKalanAlacak() {
+        let odenen = 0;
+        $('#odemeSatirlar tr').each(function() {
+            if ($(this).find('[name="odeme_yapildi[]"]').is(':checked')) {
+                odenen += parseFloat($(this).find('.odeme-tutar').val()) || 0;
+            }
+        });
+        const kalan = parseTutar($('#toplam_alacak').val()) - odenen;
+        const formatOpts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+        $('#takip_toplam_odenen').val(odenen.toLocaleString('tr-TR', formatOpts));
+        $('#takip_kalan_alacak').val(kalan.toLocaleString('tr-TR', formatOpts))
+            .toggleClass('text-danger', kalan > 0.009)
+            .toggleClass('text-success', kalan <= 0.009);
     }
 
     function calculateHacizMasraf() {
@@ -2706,7 +2731,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $('#odemeToplam').text(toplam.toLocaleString('tr-TR', formatOpts) + ' ' + simge);
         $('#toplamOdenen').text(toplamOdenen.toLocaleString('tr-TR', formatOpts) + ' ' + simge);
         $('#toplamOdenecek').text(toplamOdenecek.toLocaleString('tr-TR', formatOpts) + ' ' + simge);
-        
+        calculateKalanAlacak();
+
         // Ürün toplamı ile karşılaştır
         let urunToplamText = $('#toplamTutar').text().replace(/[^0-9,.-]/g, '');
         urunToplamText = urunToplamText.replace(/\./g, '').replace(',', '.');
