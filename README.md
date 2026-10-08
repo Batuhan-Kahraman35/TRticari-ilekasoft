@@ -1,68 +1,63 @@
-# OrnekYazilim Ticari
+# Ticari — Saha Satış, Sözleşme ve Hukuk Takip Paneli
 
-Ticari yönetim sistemi - PHP + MSSQL
+Ticari işletmelere yönelik abonelik satışı yapan bir bayi için geliştirilmiş, rol tabanlı **satış, sözleşme, tahsilat ve hukuk takip yönetim paneli**. PHP 8.3 + MSSQL üzerine kurulu; AdminLTE 4 arayüzü, merkezi cron sistemi, çok kanallı bildirim (e‑posta / SMS / WhatsApp / Web Push) ve kurulabilir PWA desteği içerir.
 
-## 📋 Gereksinimler
+> ⚠️ Bu depo, üretimdeki bir sistemin **maskeli** (örnek alan adı / IP / firma / kişi bilgisi) genel kopyasıdır. `config/` ve sırlar dahil değildir; `config/*.example.php` dosyaları örnek olarak verilmiştir.
 
-- PHP 7.4+
-- MSSQL Server
-- IIS / Apache
-- PHP SQLSRV Extension
+---
 
-## 🚀 Kurulum
+## Öne çıkan özellikler
 
-### 1. Hassas Dosyaları Yapılandırın
+| Alan | Açıklama |
+|---|---|
+| 🧾 **Cari & sözleşme** | Cari kartları, sözleşme oluşturma, ödeme planı ve stok hareketleri, toplu Excel içe aktarma |
+| 💰 **Tahsilat & senet** | Tahsilat ajandası, ödenecek senetler, aylık / personel bazlı tahsilat raporları |
+| 🏦 **Banka entegrasyonu** | Hesap hareketlerinin otomatik senkronu, dekont ile cari eşleştirme, IBAN yönetimi |
+| ⚖️ **Hukuk takip** | İcra dosyaları, taraflar, icra daireleri, işleyen faizin günlük otomatik hesaplanması, icra ajandası |
+| 🚨 **Tespit & suç duyurusu** | Lisanssız kullanım tespitleri, statü bazlı takip, ihtarname yazdırma, satılan / satılmayan / almayan raporları |
+| 👥 **Sorumlu atama** | Kayıtları saha personeline atama; atamada WhatsApp ile otomatik bilgilendirme |
+| 📊 **Raporlar** | Sezon bazlı satış / tahsilat / ülke / personel raporları, Excel çıktısı |
+| 📍 **Saha takibi** | Personel cihaz konum takibi, bölge bazlı yetkilendirme |
+| ✉️ **Çok kanallı bildirim** | E‑posta, SMS, WhatsApp (bot + webhook) ve **Web Push** (VAPID, bağımlılıksız) |
+| 📱 **Kurulabilir PWA** | Manifest, service worker, masaüstü / mobil bildirim |
+| ⏱️ **Merkezi cron** | Zamanlanmış görevler panelden yönetilir; çalışma geçmişi, overlap kilidi, telafi, manuel tetik |
+| 🔐 **Yetkilendirme** | Menü / sayfa bazlı departman yetkileri (görüntüle / ekle / düzenle / sil / yalnız kendi kayıtları) |
+| 🗂️ **Sürüm notları** | Panelden sürüm geçmişi takibi |
 
-```bash
-# Config dosyalarını kopyalayın
-copy config\database.example.php config\database.php
-copy config\mail.example.php config\mail.php
-copy config\sms.example.php config\sms.php
-```
+## Teknoloji
 
-### 2. Veritabanını Oluşturun
+- **Backend:** PHP 8.3 (framework yok), MSSQL (`sqlsrv`)
+- **Frontend:** AdminLTE 4, server-side DataTables, Select2, SweetAlert2
+- **Bildirim:** PHPMailer, Evolution API (WhatsApp), VAPID Web Push (ES256 + aes128gcm, yalnız openssl/curl)
+- **Sunucu:** IIS (`web.config` dahildir), Plesk zamanlanmış görev ile tek dakikalık `runner.php`
 
-```sql
--- config/ticari_ornekyazilim_DB.sql dosyasını MSSQL'de çalıştırın
-```
-
-### 3. Config Dosyalarını Düzenleyin
-
-**config/database.php:**
-- Veritabanı bağlantı bilgilerinizi girin
-
-**config/mail.php:**
-- SMTP ayarlarınızı yapılandırın
-
-**config/sms.php:**
-- SMS provider bilgilerinizi girin
-
-## 📁 Proje Yapısı
+## Dizin yapısı
 
 ```
-ticari.ornekproje.com/
-├── admin/              # Yönetim paneli
-│   ├── assets/        # CSS, JS, resimler
-│   ├── includes/      # Header, sidebar
-│   └── pages/         # Admin sayfaları
-├── config/            # Yapılandırma dosyaları
-├── logs/              # Log dosyaları
-└── index.php          # Ana sayfa
+admin/
+├── pages/        Panel sayfaları (cari, sözleşme, tahsilat, hukuk, raporlar, tanımlar)
+├── includes/     Ortak bileşenler (yetki, bildirim, WhatsApp, Web Push, rapor gövdeleri)
+├── api/          Dahili uç noktalar (banka, bildirim, konum, PWA, WhatsApp webhook)
+├── cron/         Merkezi cron: runner.php → tasks.php → gorevler/<kod>.php
+└── assets/       CSS, JS, görseller
+config/           database.example.php, whatsapp.example.php (gerçek config hariç)
+index.php         Giriş
 ```
 
-## 🔐 Güvenlik
+## Kurulum (özet)
 
-- `.gitignore` ile hassas dosyalar korunur
-- Config dosyaları repo'da paylaşılmaz
-- Şifreler hash'lenir (password_hash)
+1. `config/database.example.php` → `config/database.php` olarak kopyalayın, MSSQL bilgilerinizi girin.
+2. `config/whatsapp.example.php` → `config/whatsapp.php` (WhatsApp kullanılacaksa).
+3. `composer install`
+4. Web kökünü `index.php`'ye yönlendirin (IIS `web.config` dahildir).
+5. Zamanlanmış görev olarak her dakika `php admin/cron/runner.php` çalıştırın.
 
-## 👨‍💻 Geliştirici
+## Notlar
 
-**Batuhan Kahraman**
-- 📧 gelistirici@ornekproje.com.tr
-- 📞 +90 500 000 00 01
-- 🔗 [GitHub](https://github.com/Batuhan-Kahraman35)
+- Alan adı, IP, firma adı, telefon ve e‑posta değerleri örnektir (maskeli sürüm).
+- API anahtarları ve entegrasyon şifreleri kodda değil, veritabanındaki entegrasyon / ayar tablolarında tutulur.
+- `config/`, `temp/`, `logs/` ve editör geçmişi klasörleri `web.config` kuralıyla web erişimine kapalıdır.
 
-## 📝 Lisans
+## Geliştirici
 
-OrnekYazilim © 2025
+**Batuhan Kahraman** · [GitHub](https://github.com/Batuhan-Kahraman35)
