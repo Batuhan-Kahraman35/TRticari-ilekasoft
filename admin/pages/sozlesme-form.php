@@ -1865,7 +1865,16 @@ $pageTitle = $isEdit ? 'Sözleşme Düzenle' : 'Yeni Sözleşme';
         formData.append('action', 'save');
         formData.append('hareketler', JSON.stringify(hareketler));
         formData.append('odemeler', JSON.stringify(odemeler));
-        
+
+        // Ödeme dosyalarını satır index'iyle gönder (disabled input'lar kaymaya yol açmasın)
+        formData.delete('odeme_dosya[]');
+        $('#odemeSatirlar tr').each(function(idx) {
+            const fileInput = $(this).find('[name="odeme_dosya[]"]')[0];
+            if (fileInput && !fileInput.disabled && fileInput.files.length) {
+                formData.append('odeme_dosya[' + idx + ']', fileInput.files[0]);
+            }
+        });
+
         $.ajax({
             url: '',
             type: 'POST',
