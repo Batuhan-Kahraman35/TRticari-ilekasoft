@@ -2,10 +2,9 @@
 /**
  * Gorev: Hukuk Takip Gunluk Faiz Hesaplama
  *
- * takip_dosya_acilis_tarihi'nden bugune gecen gun sayisina gore yillik faiz oranini
- * gunluge cevirip takip_Isleyen_Faiz'i gunceller.
- *
- * Formul: isleyen_faiz = ana_tutar x (yillik_oran / 100 / 365) x gun_sayisi
+ * Her aktif takibin isleyen faizini odeme tarihlerini dikkate alarak yeniden hesaplar.
+ * Hesap admin/includes/HukukFaiz.php -> hukukIsleyenFaizHesapla() ile yapilir; form kaydi
+ * ile cron ayni formulu kullanir (Ticket #389/#393).
  *
  * Kaynak: admin/cron/hukuk-faiz-hesapla.php (v1). Degisenler:
  *   - Kodda gomulu CRON_SECRET_KEY kaldirildi; key artik CronAyarlar tablosunda.
@@ -18,6 +17,8 @@
  */
 
 if (!defined('CRON_SISTEMI')) exit('Dogrudan calistirilamaz.');
+
+require_once __DIR__ . '/../../includes/HukukFaiz.php';
 
 function gorev_hukuk_faiz_hesapla(array $params, $db): array
 {
@@ -84,24 +85,30 @@ function gorev_hukuk_faiz_hesapla(array $params, $db): array
             continue;
         }
 
-        $gunlukOran = $yillikOran / 100 / 365;
-        $faizTutari = $anaTutar * $gunlukOran * $gecenGun;
-        $yeniFaiz   = round($faizTutari, 2);
-
-        $toplamFaiz += $faizTutari;
-
-        $detay = "[{$dosyaNo}] Ana: " . number_format($anaTutar, 2)
-               . " | Oran: %{$yillikOran} | Gun: {$gecenGun}"
-               . " | Eski: " . number_format($eskiFaiz, 2)
-               . " | Yeni: " . number_format($yeniFaiz, 2);
-
-        if ($dryRun) {
-            echo "  [DRY-RUN] {$detay}\n";
-            $guncellenen++;
-            continue;
-        }
-
         try {
+            $h = hukukIsleyenFaizHesapla($db, $takipId);
+            if (!$h) {
+                echo "  [{$dosyaNo}] Hesaplanamadi, atlandi.\n";
+                $atlanan++;
+                continue;
+            }
+
+            $yeniFaiz    = $h['faiz'];
+            $toplamFaiz += $yeniFaiz;
+
+            $detay = "[{$dosyaNo}] Ana: " . number_format($anaTutar, 2)
+                   . " | Oran: %{$yillikOran} | Gun: {$gecenGun}"
+                   . " | Odeme: {$h['odeme_adet']} adet / " . number_format($h['odeme_toplam'], 2)
+                   . " | Kalan ana: " . number_format($h['kalan_ana'], 2)
+                   . " | Eski: " . number_format($eskiFaiz, 2)
+                   . " | Yeni: " . number_format($yeniFaiz, 2);
+
+            if ($dryRun) {
+                echo "  [DRY-RUN] {$detay}\n";
+                $guncellenen++;
+                continue;
+            }
+
             $db->execute("
                 UPDATE dbo.HukukTakip
                 SET takip_Isleyen_Faiz    = ?,

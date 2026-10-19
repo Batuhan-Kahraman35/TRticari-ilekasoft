@@ -573,10 +573,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $yeniTakip = $db->fetchOne("SELECT * FROM HukukTakip WHERE takip_id = ?", [$takipId]);
                     logKayitDegisiklikleri($db, 'form', 'HukukTakip', $takipId, null, $yeniTakip, $user['kullanici_id'], 'Yeni takip oluşturuldu');
                 }
-                
-                // Isleyen faiz kayit/guncelleme aninda hesaplanir; gece 01:00 cronundan
-                // sonra girilen tutarlarin ertesi gune kadar 0 gorunmesini engeller.
-                hukukIsleyenFaizGuncelle($db, (int)$takipId);
 
                 // === HACİZ MASRAFI EVRAKLARI ===
                 if ($cariTipiId == 3) {
@@ -841,7 +837,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                     $odemeIndex++;
                 }
-                
+
+                // Isleyen faiz odemeler kaydedildikten sonra hesaplanir: faiz odeme tarihlerine
+                // gore kalan ana paradan isler; gece cronunu beklemeden guncel gorunur.
+                hukukIsleyenFaizGuncelle($db, (int)$takipId);
+
                 echo json_encode(['success' => true, 'message' => 'Kayıt başarıyla kaydedildi!', 'takip_id' => $takipId]);
                 break;
                 
@@ -1010,7 +1010,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $dosyaYolu = __DIR__ . '/../assets/uploads/sozlesme_odemeler/' . $eskiOdeme['odeme_dosyalar'];
                     if (file_exists($dosyaYolu)) unlink($dosyaYolu);
                 }
-                
+
+                if ($eskiOdeme) {
+                    hukukIsleyenFaizCariIcinGuncelle($db, (int)$eskiOdeme['odeme_sozlesme_id']);
+                }
+
                 echo json_encode(['success' => true, 'message' => 'Ödeme silindi!']);
                 break;
                 
