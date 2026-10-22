@@ -3,6 +3,7 @@
  * Tahsilat Ajandası
  * Aylık takvim görünümünde günlük tahsilatlar.
  *  - Beklenen tahsilat : odeme_vade_tarih o güne denk gelen ödemeler
+ *                        (vadesiz tiplerde — Nakit/KK/EFT — ödenmemişse odeme_tarih)
  *  - Gerçekleşen tahsilat: odeme_yapildi = 1 ve odeme_tarih o güne denk gelen ödemeler
  */
 
@@ -63,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 
+    // Beklenen tarih: vade varsa vade; vadesiz ve ödenmemiş kayıtta planlanan ödeme tarihi
+    $beklenenTarih = "(CASE WHEN o.odeme_vade_tarih IS NOT NULL THEN o.odeme_vade_tarih
+                            WHEN o.odeme_yapildi = 0 THEN o.odeme_tarih END)";
+
     try {
         switch ($action) {
 
@@ -89,17 +94,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Beklenen (vade tarihi bazlı) — günlük
                 $beklenenRows = $db->fetchAll("
-                    SELECT DAY(o.odeme_vade_tarih) AS gun,
+                    SELECT DAY($beklenenTarih) AS gun,
                            ISNULL(SUM(o.odeme_tutar), 0) AS tutar,
                            COUNT(*) AS adet
                     FROM Sozlesme_Odemeler o
                     LEFT JOIN Sozlesmeler s ON o.odeme_sozlesme_id = s.sozlesme_id
                     LEFT JOIN Cari c ON s.sozlesme_cari_id = c.cari_id
-                    WHERE o.odeme_vade_tarih IS NOT NULL
-                      AND YEAR(o.odeme_vade_tarih) = ?
-                      AND MONTH(o.odeme_vade_tarih) = ?
+                    WHERE $beklenenTarih IS NOT NULL
+                      AND YEAR($beklenenTarih) = ?
+                      AND MONTH($beklenenTarih) = ?
                       $filtreSql
-                    GROUP BY DAY(o.odeme_vade_tarih)
+                    GROUP BY DAY($beklenenTarih)
                 ", array_merge([$yil, $ay], $filtreParams));
 
                 // Gerçekleşen (ödeme tarihi bazlı, ödeme yapıldı) — günlük
@@ -120,17 +125,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Beklenip henüz tahsil edilmemiş (vade bazlı, yapıldı=0) — gün başlığı için
                 $bekleyenAcikRows = $db->fetchAll("
-                    SELECT DAY(o.odeme_vade_tarih) AS gun,
+                    SELECT DAY($beklenenTarih) AS gun,
                            ISNULL(SUM(o.odeme_tutar), 0) AS tutar
                     FROM Sozlesme_Odemeler o
                     LEFT JOIN Sozlesmeler s ON o.odeme_sozlesme_id = s.sozlesme_id
                     LEFT JOIN Cari c ON s.sozlesme_cari_id = c.cari_id
                     WHERE o.odeme_yapildi = 0
-                      AND o.odeme_vade_tarih IS NOT NULL
-                      AND YEAR(o.odeme_vade_tarih) = ?
-                      AND MONTH(o.odeme_vade_tarih) = ?
+                      AND $beklenenTarih IS NOT NULL
+                      AND YEAR($beklenenTarih) = ?
+                      AND MONTH($beklenenTarih) = ?
                       $filtreSql
-                    GROUP BY DAY(o.odeme_vade_tarih)
+                    GROUP BY DAY($beklenenTarih)
                 ", array_merge([$yil, $ay], $filtreParams));
 
                 // Günlere göre birleştir
@@ -171,14 +176,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $ustOzetRow = $db->fetchOne("
                     SELECT
-                        ISNULL(SUM(CASE WHEN CONVERT(date, o.odeme_vade_tarih) = ? THEN o.odeme_tutar END), 0) AS bugun,
-                        ISNULL(SUM(CASE WHEN CONVERT(date, o.odeme_vade_tarih) BETWEEN ? AND ? THEN o.odeme_tutar END), 0) AS hafta,
-                        ISNULL(SUM(CASE WHEN CONVERT(date, o.odeme_vade_tarih) BETWEEN ? AND ? THEN o.odeme_tutar END), 0) AS ay
+                        ISNULL(SUM(CASE WHEN CONVERT(date, $beklenenTarih) = ? THEN o.odeme_tutar END), 0) AS bugun,
+                        ISNULL(SUM(CASE WHEN CONVERT(date, $beklenenTarih) BETWEEN ? AND ? THEN o.odeme_tutar END), 0) AS hafta,
+                        ISNULL(SUM(CASE WHEN CONVERT(date, $beklenenTarih) BETWEEN ? AND ? THEN o.odeme_tutar END), 0) AS ay
                     FROM Sozlesme_Odemeler o
                     LEFT JOIN Sozlesmeler s ON o.odeme_sozlesme_id = s.sozlesme_id
                     LEFT JOIN Cari c ON s.sozlesme_cari_id = c.cari_id
                     WHERE o.odeme_yapildi = 0
-                      AND o.odeme_vade_tarih IS NOT NULL
+                      AND $beklenenTarih IS NOT NULL
                       $filtreSql
                 ", array_merge([$bugunStr, $haftaBas, $haftaSon, $ayBas, $aySon], $filtreParams));
 
@@ -238,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     LEFT JOIN Sozlesme_OdemeTipleri ot ON o.odeme_tipi_id = ot.odeme_tipi_id
                     LEFT JOIN Sozlesme_OdemeDurumlari d ON o.odeme_durum_id = d.odeme_durum_id
                     WHERE (
-                            CONVERT(VARCHAR(10), o.odeme_vade_tarih, 120) = ?
+                            CONVERT(VARCHAR(10), $beklenenTarih, 120) = ?
                             OR (o.odeme_yapildi = 1 AND CONVERT(VARCHAR(10), o.odeme_tarih, 120) = ?)
                           )
                       $filtreSql
@@ -301,8 +306,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     LEFT JOIN Sozlesme_OdemeTipleri ot ON o.odeme_tipi_id = ot.odeme_tipi_id
                     LEFT JOIN Sozlesme_OdemeDurumlari d ON o.odeme_durum_id = d.odeme_durum_id
                     WHERE (
-                            (o.odeme_vade_tarih IS NOT NULL
-                             AND YEAR(o.odeme_vade_tarih) = ? AND MONTH(o.odeme_vade_tarih) = ?)
+                            ($beklenenTarih IS NOT NULL
+                             AND YEAR($beklenenTarih) = ? AND MONTH($beklenenTarih) = ?)
                             OR
                             (o.odeme_yapildi = 1 AND o.odeme_tarih IS NOT NULL
                              AND YEAR(o.odeme_tarih) = ? AND MONTH(o.odeme_tarih) = ?)
