@@ -1239,8 +1239,11 @@ class WhatsappBot
     // Evolution API
     // ==========================================================
 
-    /** Evolution baglanti bilgileri (URL / API anahtari Entegrasyonlar tablosunda) */
-    private function baglanti(): ?array
+    /**
+     * Evolution baglanti bilgileri (URL / API anahtari Entegrasyonlar tablosunda).
+     * $instance bos ise botun kendi instance'i (instance_kod) kullanilir.
+     */
+    private function baglanti(string $instance = ''): ?array
     {
         $row = $this->db->fetchOne("
             SELECT TOP 1 e.entegrasyon_url, e.entegrasyon_api_key
@@ -1249,7 +1252,7 @@ class WhatsappBot
         ");
         if (!$row) return null;
 
-        $instance = $this->ayar('instance_kod');
+        if ($instance === '') $instance = $this->ayar('instance_kod');
         if ($instance === '') return null;
 
         return [
@@ -1344,14 +1347,16 @@ class WhatsappBot
      *
      * Not: hedef bireysel yetkili ise numara log'a dusurulmez, yalnizca
      * hedef tipi yazilir.
+     *
+     * @param string $instance Bos ise botun instance'i; dolu ise o instance'tan gonderilir
      */
-    public function gonder(string $hedefJid, string $mesaj, string $hedefTipi = 'MUSTERI'): array
+    public function gonder(string $hedefJid, string $mesaj, string $hedefTipi = 'MUSTERI', string $instance = ''): array
     {
         if (trim($mesaj) === '') {
             return ['success' => false, 'message' => 'Bos mesaj gonderilmedi.'];
         }
 
-        $b = $this->baglanti();
+        $b = $this->baglanti($instance);
         if ($b === null) {
             $sonuc = ['success' => false, 'message' => 'Evolution baglantisi tanimli degil.'];
             $this->mesajKaydet($this->logKonusmaId($hedefTipi), $this->logJid($hedefJid, $hedefTipi), 'GIDEN', $mesaj, '', false, $sonuc['message']);
