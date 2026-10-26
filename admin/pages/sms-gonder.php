@@ -59,6 +59,29 @@ $yerTutucular = [
     'unvan' => ['anahtar' => 'UNVAN', 'kolon' => 'cari_unvan', 'aciklama' => 'Cari unvanı'],
 ];
 
+// POST'tan gelen ID listesini (JSON string veya dizi) tekil int dizisine çevirir
+function idListesi($deger): array
+{
+    if (is_string($deger)) {
+        $cozulen = json_decode($deger, true);
+        $deger   = is_array($cozulen) ? $cozulen : [$deger];
+    }
+    return array_values(array_unique(array_filter(array_map('intval', (array) $deger))));
+}
+
+// Cari tipi / şehir filtresini WHERE koşullarına ekler ($on: tablo takma adı, ör. 'c.')
+function cariFiltreEkle(array $tipler, array $sehirler, array &$where, array &$params, string $on = ''): void
+{
+    if ($tipler) {
+        $where[] = $on . 'cari_tipi_id IN (' . str_repeat('?,', count($tipler) - 1) . '?)';
+        $params  = array_merge($params, $tipler);
+    }
+    if ($sehirler) {
+        $where[] = $on . 'cari_sehirler IN (' . str_repeat('?,', count($sehirler) - 1) . '?)';
+        $params  = array_merge($params, $sehirler);
+    }
+}
+
 // ─── AJAX ───
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -113,19 +136,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
 
             case 'cari_yukle':
-                $tipId  = (int) ($_POST['cari_tipi_id'] ?? 0);
                 $where  = ['c.cari_aktif = 1', "ISNULL(c.cari_telefon, '') <> ''"];
                 $params = [];
-                if ($tipId > 0) {
-                    $where[]  = 'c.cari_tipi_id = ?';
-                    $params[] = $tipId;
-                }
+                cariFiltreEkle(
+                    idListesi($_POST['cari_tipi_idler'] ?? []),
+                    idListesi($_POST['sehir_idler'] ?? []),
+                    $where, $params, 'c.'
+                );
 
                 $rows = $db->fetchAll("
                     SELECT c.cari_id, c.cari_adi, c.cari_unvan, c.cari_telefon,
-                           t.cari_tipi_ad
+                           t.cari_tipi_ad, s.SehirAdi
                     FROM Cari c
                     LEFT JOIN Cari_CariTipleri t ON t.cari_tipi_id = c.cari_tipi_id
+                    LEFT JOIN Adres_Sehirler s ON s.SehirId = c.cari_sehirler
                     WHERE " . implode(' AND ', $where) . "
                     ORDER BY c.cari_adi
                 ", $params) ?: [];
@@ -140,6 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'unvan'   => $r['cari_unvan'],
                         'telefon' => $r['cari_telefon'],
                         'tip'     => $r['cari_tipi_ad'],
+                        'sehir'   => $r['SehirAdi'],
                     ];
                 }
                 echo json_encode(['success' => true, 'data' => $data], JSON_UNESCAPED_UNICODE);
@@ -191,24 +216,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $kanalId    = (int) ($_POST['kanal_id'] ?? 0);
                 $commercial = !empty($_POST['commercial']);
 
-                $cariIdler = $_POST['cari_idler'] ?? [];
-                if (is_string($cariIdler)) {
-                    $cozulen   = json_decode($cariIdler, true);
-                    $cariIdler = is_array($cozulen) ? $cozulen : [$cariIdler];
-                }
-                $cariIdler = array_values(array_unique(array_filter(array_map('intval', (array) $cariIdler))));
+                $cariIdler = idListesi($_POST['cari_idler'] ?? []);
+                $tipler    = idListesi($_POST['cari_tipi_idler'] ?? []);
+                $sehirler  = idListesi($_POST['sehir_idler'] ?? []);
 
-                if (!$cariIdler) throw new Exception('En az bir cari seçin.');
+                if (!$cariIdler && !$tipler && !$sehirler) {
+                    throw new Exception('Cari tipi, şehir veya cari seçimlerinden en az birini yapın.');
+                }
                 if ($mesaj === '') throw new Exception('Mesaj alanı boş olamaz.');
 
-                $yerTutucu = str_repeat('?,', count($cariIdler) - 1) . '?';
-                $cariler   = $db->fetchAll("
+                // Cari seçildiyse yalnız onlara, seçilmediyse filtreye uyan tüm carilere gönderilir
+                $where  = ['cari_aktif = 1', "ISNULL(cari_telefon, '') <> ''"];
+                $params = [];
+                if ($cariIdler) {
+                    $where[] = 'cari_id IN (' . str_repeat('?,', count($cariIdler) - 1) . '?)';
+                    $params  = $cariIdler;
+                } else {
+                    cariFiltreEkle($tipler, $sehirler, $where, $params);
+                }
+
+                $cariler = $db->fetchAll("
                     SELECT cari_id, cari_adi, cari_unvan, cari_telefon
                     FROM Cari
-                    WHERE cari_id IN ($yerTutucu) AND cari_aktif = 1
-                ", $cariIdler) ?: [];
+                    WHERE " . implode(' AND ', $where) . "
+                ", $params) ?: [];
 
-                if (!$cariler) throw new Exception('Seçilen cariler bulunamadı.');
+                $cariler = array_values(array_filter($cariler, function ($c) {
+                    return SmsHelper::normalizeTelefon($c['cari_telefon']) !== null;
+                }));
+
+                if (!$cariler) throw new Exception('Gönderilecek geçerli telefonlu cari bulunamadı.');
 
                 set_time_limit(0);
                 ignore_user_abort(true);
@@ -265,6 +302,22 @@ $cariTipleri = $db->fetchAll("
     FROM Cari_CariTipleri
     WHERE cari_tipi_durum = 1
     ORDER BY cari_tipi_sira
+") ?: [];
+
+// Yalnızca aktif carisi olan şehirler listelenir
+$sehirler = $db->fetchAll("
+    SELECT s.SehirId, s.SehirAdi
+    FROM Adres_Sehirler s
+    WHERE s.SehirId IN (SELECT DISTINCT cari_sehirler FROM Cari WHERE cari_aktif = 1)
+    ORDER BY s.SehirAdi
+") ?: [];
+
+// Mesaja eklenebilecek personel telefonları
+$personeller = $db->fetchAll("
+    SELECT kullanici_id, kullanici_ad, kullanici_soyad, kullanici_telefon
+    FROM kullanicilar
+    WHERE kullanici_durum = 1 AND ISNULL(kullanici_telefon, '') <> ''
+    ORDER BY kullanici_ad, kullanici_soyad
 ") ?: [];
 ?>
 <!DOCTYPE html>
@@ -384,6 +437,14 @@ $cariTipleri = $db->fetchAll("
                                                 Kalan: <span class="sms-kalan">500</span> karakter |
                                                 <span class="sms-adet">1 SMS</span>
                                             </small>
+                                            <div class="mt-2">
+                                                <select class="form-select personel-telefon" data-hedef="#mesaj">
+                                                    <option value=""></option>
+                                                    <?php foreach ($personeller as $p): ?>
+                                                        <option value="<?= htmlspecialchars(trim($p['kullanici_telefon'])) ?>"><?= htmlspecialchars($p['kullanici_ad'] . ' ' . $p['kullanici_soyad'] . ' (' . trim($p['kullanici_telefon']) . ')') ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
                                         </div>
 
                                         <div class="mb-3">
@@ -420,18 +481,27 @@ $cariTipleri = $db->fetchAll("
                                             </select>
                                         </div>
 
-                                        <div class="mb-3">
-                                            <label for="cari_tipi_id" class="form-label">Cari Tipi</label>
-                                            <select class="form-select" id="cari_tipi_id">
-                                                <option value="">Tüm Tipler</option>
-                                                <?php foreach ($cariTipleri as $tip): ?>
-                                                    <option value="<?= (int) $tip['cari_tipi_id'] ?>"><?= htmlspecialchars($tip['cari_tipi_ad']) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
+                                        <div class="row">
+                                            <div class="col-md-6 mb-3">
+                                                <label for="cari_tipi_id" class="form-label">Cari Tipi</label>
+                                                <select class="form-select" id="cari_tipi_id" multiple>
+                                                    <?php foreach ($cariTipleri as $tip): ?>
+                                                        <option value="<?= (int) $tip['cari_tipi_id'] ?>"><?= htmlspecialchars($tip['cari_tipi_ad']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6 mb-3">
+                                                <label for="cari_sehir_id" class="form-label">Şehir</label>
+                                                <select class="form-select" id="cari_sehir_id" multiple>
+                                                    <?php foreach ($sehirler as $s): ?>
+                                                        <option value="<?= (int) $s['SehirId'] ?>"><?= htmlspecialchars($s['SehirAdi']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
                                         </div>
 
                                         <div class="mb-3">
-                                            <label for="cari_listesi" class="form-label">Cari Seç <span class="text-danger">*</span></label>
+                                            <label for="cari_listesi" class="form-label">Cari Seç</label>
                                             <select class="form-select" id="cari_listesi" multiple size="8">
                                                 <option value="">Önce cari listesini yükleyin...</option>
                                             </select>
@@ -446,6 +516,9 @@ $cariTipleri = $db->fetchAll("
                                                     <i class="bi bi-x"></i> Seçimi Temizle
                                                 </button>
                                             </div>
+                                            <small class="text-muted d-block mt-1">
+                                                Cari seçilmezse seçilen cari tipi / şehre uyan tüm carilere gönderilir.
+                                            </small>
                                         </div>
 
                                         <div class="mb-3">
@@ -462,6 +535,14 @@ $cariTipleri = $db->fetchAll("
                                                     <span class="me-2"><?= htmlspecialchars($t['aciklama']) ?></span>
                                                 <?php endforeach; ?>
                                             </small>
+                                            <div class="mt-2">
+                                                <select class="form-select personel-telefon" data-hedef="#cari_mesaj">
+                                                    <option value=""></option>
+                                                    <?php foreach ($personeller as $p): ?>
+                                                        <option value="<?= htmlspecialchars(trim($p['kullanici_telefon'])) ?>"><?= htmlspecialchars($p['kullanici_ad'] . ' ' . $p['kullanici_soyad'] . ' (' . trim($p['kullanici_telefon']) . ')') ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
                                         </div>
 
                                         <div class="mb-3">
@@ -503,7 +584,17 @@ $cariTipleri = $db->fetchAll("
         // Gönderim encoding = 1 (UCS2) olduğu için parça uzunluğu Türkçe metne göre hesaplanır
         const TEK_SMS = 70, COK_SMS = 67, LIMIT = 500;
 
-        $('#kanal_id, #cari_kanal_id, #cari_tipi_id').select2({ theme: 'bootstrap-5', width: '100%' });
+        $('#kanal_id, #cari_kanal_id').select2({ theme: 'bootstrap-5', width: '100%' });
+        $('#cari_tipi_id').select2({ theme: 'bootstrap-5', width: '100%', placeholder: 'Tüm Tipler', closeOnSelect: false });
+        $('#cari_sehir_id').select2({ theme: 'bootstrap-5', width: '100%', placeholder: 'Tüm Şehirler', closeOnSelect: false });
+
+        // Cari tipi / şehir filtresi (çoklu seçim, JSON olarak gönderilir)
+        function cariFiltre() {
+            return {
+                cari_tipi_idler: JSON.stringify($('#cari_tipi_id').val() || []),
+                sehir_idler: JSON.stringify($('#cari_sehir_id').val() || [])
+            };
+        }
         $('#cari_listesi').select2({
             theme: 'bootstrap-5',
             width: '100%',
@@ -664,7 +755,7 @@ $cariTipleri = $db->fetchAll("
         // ── Cari listesi ──
         $('#cariYukle').on('click', function () {
             const $btn = $(this).prop('disabled', true);
-            $.post('', { action: 'cari_yukle', cari_tipi_id: $('#cari_tipi_id').val() || 0 }, function (r) {
+            $.post('', $.extend({ action: 'cari_yukle' }, cariFiltre()), function (r) {
                 if (!r.success) { showToast(r.message, 'error'); return; }
 
                 const secim = $('#cari_listesi').empty();
@@ -672,7 +763,9 @@ $cariTipleri = $db->fetchAll("
                     secim.append('<option value="">Telefonu olan cari bulunamadı</option>');
                 } else {
                     r.data.forEach(function (c) {
-                        const etiket = c.adi + ' (' + c.telefon + ')' + (c.tip ? ' - ' + c.tip : '');
+                        const etiket = c.adi + ' (' + c.telefon + ')'
+                            + (c.tip ? ' - ' + c.tip : '')
+                            + (c.sehir ? ' - ' + c.sehir : '');
                         secim.append($('<option>', { value: c.id, text: etiket }));
                     });
                     showToast(r.data.length + ' cari yüklendi', 'success');
@@ -699,6 +792,19 @@ $cariTipleri = $db->fetchAll("
             alan.val((alan.val() + ' ' + $(this).text()).trim()).trigger('input').focus();
         });
 
+        // Personel telefonunu seçince mesaja ekle
+        $('.personel-telefon').select2({
+            theme: 'bootstrap-5',
+            width: '100%',
+            placeholder: 'Personel telefonu ekle...',
+            allowClear: true
+        }).on('select2:select', function () {
+            const tel  = $(this).val();
+            const alan = $($(this).data('hedef'));
+            if (tel) alan.val((alan.val() + ' ' + tel).trim()).trigger('input').focus();
+            $(this).val(null).trigger('change.select2');
+        });
+
         // ── Cari toplu gönderim ──
         $('#cariForm').on('submit', function (e) {
             e.preventDefault();
@@ -707,38 +813,58 @@ $cariTipleri = $db->fetchAll("
             const mesaj   = $('#cari_mesaj').val().trim();
             const ticari  = $('#cari_commercial').is(':checked');
 
-            if (!secilen.length) { showWarning('Uyarı!', 'Lütfen en az bir cari seçin.'); return; }
-            if (!mesaj)          { showWarning('Uyarı!', 'Mesaj alanı boş olamaz.'); return; }
+            const filtre    = cariFiltre();
+            const filtreVar =($('#cari_tipi_id').val() || []).length || ($('#cari_sehir_id').val() || []).length;
 
-            let metin = secilen.length + ' cariye SMS gönderilecek.';
-            if (ticari) metin += '\n\nTİCARİ İLETİ olarak gönderilecek. Alıcıların İYS onayı bulunmalıdır.';
+            if (!secilen.length && !filtreVar) {
+                showWarning('Uyarı!', 'Cari tipi, şehir veya cari seçimlerinden en az birini yapın.');
+                return;
+            }
+            if (!mesaj) { showWarning('Uyarı!', 'Mesaj alanı boş olamaz.'); return; }
 
-            confirmAction('Toplu SMS göndermek istediğinize emin misiniz?', metin, function () {
-                showLoading('SMS gönderiliyor...');
-                $.post('', {
-                    action: 'gonder_cari',
-                    cari_idler: JSON.stringify(secilen),
-                    mesaj: mesaj,
-                    kanal_id: $('#cari_kanal_id').val() || 0,
-                    commercial: ticari ? 1 : 0
-                }, function (r) {
-                    hideLoading();
-                    sonucGoster(r);
-                    if (r.success) {
-                        $('#cari_mesaj').val('');
-                        $('#cariForm .sms-kalan').text(LIMIT);
-                        $('#cariForm .sms-adet').text('1 SMS');
-                        $('#cari_commercial').prop('checked', false);
-                        $('#cari_listesi option').prop('selected', false);
-                        $('#cari_listesi').trigger('change.select2');
-                    }
-                    bakiyeYukle();
-                    statYukle();
+            // Cari seçilmediyse filtreye uyan cari sayısı onaydan önce sunucudan alınır
+            if (secilen.length) {
+                gonderimOnayla(secilen.length + ' seçili cariye SMS gönderilecek.');
+            } else {
+                $.post('', $.extend({ action: 'cari_yukle' }, filtre), function (r) {
+                    if (!r.success) { showError('Hata!', r.message); return; }
+                    if (!r.data.length) { showWarning('Uyarı!', 'Seçilen filtreye uyan telefonlu cari bulunamadı.'); return; }
+                    gonderimOnayla('Filtreye uyan ' + r.data.length + ' cariye SMS gönderilecek.');
                 }, 'json').fail(function () {
-                    hideLoading();
-                    showError('Hata!', 'SMS gönderimi başarısız.');
+                    showError('Hata!', 'Cari sayısı alınamadı.');
                 });
-            });
+            }
+
+            function gonderimOnayla(metin) {
+                if (ticari) metin += '\n\nTİCARİ İLETİ olarak gönderilecek. Alıcıların İYS onayı bulunmalıdır.';
+
+                confirmAction('Toplu SMS göndermek istediğinize emin misiniz?', metin, function () {
+                    showLoading('SMS gönderiliyor...');
+                    $.post('', $.extend({
+                        action: 'gonder_cari',
+                        cari_idler: JSON.stringify(secilen),
+                        mesaj: mesaj,
+                        kanal_id: $('#cari_kanal_id').val() || 0,
+                        commercial: ticari ? 1 : 0
+                    }, filtre), function (r) {
+                        hideLoading();
+                        sonucGoster(r);
+                        if (r.success) {
+                            $('#cari_mesaj').val('');
+                            $('#cariForm .sms-kalan').text(LIMIT);
+                            $('#cariForm .sms-adet').text('1 SMS');
+                            $('#cari_commercial').prop('checked', false);
+                            $('#cari_listesi option').prop('selected', false);
+                            $('#cari_listesi').trigger('change.select2');
+                        }
+                        bakiyeYukle();
+                        statYukle();
+                    }, 'json').fail(function () {
+                        hideLoading();
+                        showError('Hata!', 'SMS gönderimi başarısız.');
+                    });
+                });
+            }
         });
     });
     </script>
