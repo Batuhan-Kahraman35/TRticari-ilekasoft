@@ -66,6 +66,9 @@ function cariBagliKayitlar($db, $cariid, $ornekLimit = 5) {
         ORDER BY tablo, kolon
     ");
 
+    // FK tanımı olmayan ama cariye bağlı tablolar
+    $fkListesi[] = ['sema' => 'dbo', 'tablo' => 'Sozlesmeler', 'kolon' => 'sozlesme_cari_id', 'fk_adi' => '(FK yok)'];
+
     $q = fn($ad) => '[' . str_replace(']', ']]', $ad) . ']';
     $cariTipiId = (int)($db->fetchOne("SELECT cari_tipi_id FROM Cari WHERE cari_id = ?", [$cariid])['cari_tipi_id'] ?? 0);
 
@@ -101,6 +104,70 @@ function cariBagliKayitlar($db, $cariid, $ornekLimit = 5) {
         ];
     }
     return $sonuc;
+}
+
+/**
+ * Cariyi bağlı tüm kayıtlarıyla birlikte siler (tek transaction).
+ * Sözleşme → ödeme / stok hareketi, hukuk takip → haciz dosyası, cari dosyaları.
+ * Banka hareketleri silinmez, yalnız ödeme/cari eşleşmesi kaldırılır.
+ */
+function cariKademeliSil($db, $cariid, $kullaniciId) {
+    $uploads = __DIR__ . '/../assets/uploads/';
+    $sozAlt = "SELECT sozlesme_id FROM Sozlesmeler WHERE sozlesme_cari_id = ?";
+    $odemeAlt = "SELECT odeme_id FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id IN ($sozAlt)";
+    $takipAlt = "SELECT takip_id FROM HukukTakip WHERE takip_cari_id = ?";
+
+    // Silinecek fiziksel dosyalar (commit sonrası silinir)
+    $dosyalar = [];
+    foreach ($db->fetchAll("SELECT dosya_yol FROM Cari_Dosyalar WHERE cari_id = ?", [$cariid]) as $r) {
+        $dosyalar[] = __DIR__ . '/../' . str_replace('admin/', '', $r['dosya_yol']);
+    }
+    foreach ($db->fetchAll("SELECT odeme_dosyalar FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id IN ($sozAlt) AND ISNULL(odeme_dosyalar, '') <> ''", [$cariid]) as $r) {
+        $dosyalar[] = $uploads . 'sozlesme_odemeler/' . basename($r['odeme_dosyalar']);
+    }
+    foreach ($db->fetchAll("SELECT HukukHacizDosyalari_DosyaAdi AS ad FROM HukukHacizDosyalari WHERE HukukHacizDosyalari_takip_id IN ($takipAlt)", [$cariid]) as $r) {
+        $dosyalar[] = $uploads . 'haciz_dosyalar/' . basename($r['ad']);
+    }
+
+    $ozet = [
+        'sozlesme' => (int)$db->fetchOne("SELECT COUNT(*) AS n FROM Sozlesmeler WHERE sozlesme_cari_id = ?", [$cariid])['n'],
+        'odeme'    => (int)$db->fetchOne("SELECT COUNT(*) AS n FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id IN ($sozAlt)", [$cariid])['n'],
+        'takip'    => (int)$db->fetchOne("SELECT COUNT(*) AS n FROM HukukTakip WHERE takip_cari_id = ?", [$cariid])['n'],
+        'dosya'    => count($dosyalar),
+    ];
+
+    $adimlar = [
+        ["UPDATE BankaHesapHareketleri SET hareket_odeme_id = NULL, hareket_islendi = 0, GuncelleyenKullanici = ?, GuncellemeTarihi = GETDATE()
+          WHERE hareket_odeme_id IN ($odemeAlt)", [$kullaniciId, $cariid]],
+        ["UPDATE BankaHesapHareketleri SET hareket_oneri_cari_id = NULL WHERE hareket_oneri_cari_id = ?", [$cariid]],
+        ["DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id IN ($sozAlt)", [$cariid]],
+        ["DELETE FROM Sozlesme_StokHareketleri WHERE hareket_sozlesme_id IN ($sozAlt)", [$cariid]],
+        ["DELETE FROM Sozlesmeler WHERE sozlesme_cari_id = ?", [$cariid]],
+        ["DELETE FROM HukukHacizDosyalari WHERE HukukHacizDosyalari_takip_id IN ($takipAlt)", [$cariid]],
+        ["DELETE FROM HukukTakip WHERE takip_cari_id = ?", [$cariid]],
+        ["DELETE FROM Cari_Dosyalar WHERE cari_id = ?", [$cariid]],
+        ["DELETE FROM Cari WHERE cari_id = ?", [$cariid]],
+    ];
+
+    $conn = $db->getConnection();
+    if (!sqlsrv_begin_transaction($conn)) {
+        throw new Exception('Transaction başlatılamadı.');
+    }
+    foreach ($adimlar as [$sql, $params]) {
+        if (!$db->execute($sql, $params)) {
+            sqlsrv_rollback($conn);
+            $hata = sqlsrv_errors()[0]['message'] ?? 'Bilinmeyen hata';
+            throw new Exception('Silme işlemi geri alındı: ' . $hata);
+        }
+    }
+    sqlsrv_commit($conn);
+
+    foreach ($dosyalar as $yol) {
+        if (is_file($yol)) {
+            @unlink($yol);
+        }
+    }
+    return $ozet;
 }
 
 // AJAX işlemleri
@@ -280,24 +347,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Cari sil
                 $cariid = (int)($_POST['cari_id'] ?? 0);
 
-                // Bağlı kayıt varsa silme, listeyi döndür
-                $bagli = cariBagliKayitlar($db, $cariid);
-                if (!empty($bagli)) {
-                    echo json_encode(['success' => false, 'message' => 'Bu cariye bağlı kayıtlar olduğu için silinemez.', 'bagli' => $bagli]);
+                // Log için eski kaydı al
+                $eskiCari = $db->fetchOne("SELECT * FROM Cari WHERE cari_id = ?", [$cariid]);
+                if (!$eskiCari) {
+                    echo json_encode(['success' => false, 'message' => 'Cari bulunamadı!']);
                     break;
                 }
 
-                // Log için eski kaydı al
-                $eskiCari = $db->fetchOne("SELECT * FROM Cari WHERE cari_id = ?", [$cariid]);
+                // Cari + bağlı tüm kayıtlar (sözleşme, ödeme, hukuk takip, dosyalar)
+                $ozet = cariKademeliSil($db, $cariid, $user['kullanici_id']);
 
-                $db->delete('Cari', ['cari_id' => $cariid]);
+                $ozetMetin = sprintf('%d sözleşme, %d ödeme, %d hukuk takip, %d dosya', $ozet['sozlesme'], $ozet['odeme'], $ozet['takip'], $ozet['dosya']);
+                logKayitDegisiklikleri($db, 'cari-yonetimi', 'Cari', $cariid, $eskiCari, null, $user['kullanici_id'], 'Cari bağlı kayıtlarıyla silindi (' . $ozetMetin . ')');
 
-                // Log kaydı (silme başarılı olduktan sonra)
-                if ($eskiCari) {
-                    logKayitDegisiklikleri($db, 'cari-yonetimi', 'Cari', $cariid, $eskiCari, null, $user['kullanici_id'], 'Cari silindi');
-                }
-
-                echo json_encode(['success' => true, 'message' => 'Cari başarıyla silindi']);
+                echo json_encode(['success' => true, 'message' => 'Cari ve bağlı kayıtlar silindi: ' . $ozetMetin]);
                 break;
 
             case 'bagliKayitlar':
@@ -694,25 +757,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         // Cari sil
         function deleteCari(cariid) {
-            confirmAction(
-                'Bu cariyi silmek istediğinize emin misiniz?',
-                'Bu işlem geri alınamaz!',
-                function() {
+            $.post('', { action: 'bagliKayitlar', cari_id: cariid }, function(r) {
+                const liste = (r && r.success) ? r.data : [];
+                let html = '<p>Bu işlem geri alınamaz!</p>';
+                if (liste.length) {
+                    html += '<div class="alert alert-danger text-start mb-0"><b>Bağlı kayıtlar da silinecek:</b><ul class="mb-0">';
+                    liste.forEach(k => html += `<li>${htmlKacis(k.tablo)}: ${k.adet} kayıt</li>`);
+                    html += '</ul><small>Sözleşmelere ait ödemeler de silinir; banka hareketlerinin eşleşmesi kaldırılır.</small></div>';
+                }
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Bu cariyi silmek istediğinize emin misiniz?',
+                    html: html,
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc3545',
+                    confirmButtonText: 'Evet, sil',
+                    cancelButtonText: 'Vazgeç'
+                }).then(function(sonuc) {
+                    if (!sonuc.isConfirmed) return;
                     $.post('', { action: 'delete', cari_id: cariid }, function(response) {
                         if (response.success) {
                             showSuccess('Silindi!', response.message);
                             loadStats();
                             table.ajax.reload(null, false);
-                        } else if (response.bagli) {
-                            bagliKayitPenceresi(response.bagli, response.message);
                         } else {
                             showError('Hata!', response.message);
                         }
                     }).fail(function() {
                         showError('Bağlantı Hatası!', 'Sunucuya ulaşılamıyor.');
                     });
-                }
-            );
+                });
+            }).fail(function() {
+                showError('Bağlantı Hatası!', 'Sunucuya ulaşılamıyor.');
+            });
         }
 
         // Bağlı kayıtları getir

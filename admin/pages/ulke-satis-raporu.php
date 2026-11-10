@@ -371,6 +371,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $genelIcra = 0;
                 $genelOdenecekSenet = 0;
                 $genelKalan = 0;
+                $genelBolgeTutar = null;
+                $genelBolgeKalan = null;
                 $colTotals = [];
                 foreach ($columns as $col) {
                     $colTotals[$col['id']] = 0.0;
@@ -428,6 +430,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Bölge tutarından satış düşülür (eksi = bölge tutarı aşıldı)
                     $bolgeTutar = $bolgeTutarMap[$sid] ?? null;
                     $bolgeKalan = $bolgeTutar !== null ? $bolgeTutar - $satis : null;
+                    if ($bolgeTutar !== null) {
+                        $genelBolgeTutar = ($genelBolgeTutar ?? 0) + $bolgeTutar;
+                        $genelBolgeKalan = ($genelBolgeKalan ?? 0) + $bolgeKalan;
+                    }
 
                     $report[] = [
                         'ulke_id' => $uid,
@@ -447,9 +453,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ];
                 }
                 
-                // Kalan sütununa göre büyükten küçüğe sırala
+                // Satış tutarına göre büyükten küçüğe sırala
                 usort($report, function($a, $b) {
-                    return $b['kalan'] <=> $a['kalan'];
+                    return $b['satis_tutari'] <=> $a['satis_tutari'];
                 });
                 
                 // Genel tahsilat toplamı
@@ -466,6 +472,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'toplam' => [
                         'adet' => $genelAdet,
                         'satis' => $genelSatis,
+                        'bolge_tutar' => $genelBolgeTutar,
+                        'bolge_kalan' => $genelBolgeKalan,
                         'tahsilat' => $genelTahsilat,
                         'icra' => $genelIcra,
                         'zaafiyet' => $genelZaafiyet,
@@ -837,7 +845,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     let footHtml = '<tr><td colspan="2"><strong>TOPLAM</strong></td>';
                     footHtml += `<td class="text-center"><strong>${toplam.adet || 0}</strong></td>`;
-                    footHtml += `<td class="text-end clickable-cell" data-tip="satis" title="Detay için tıklayın" onclick="handleCellClick(this)">${formatTutar(toplam.satis)}</td>`;
+                    footHtml += `<td class="text-end clickable-cell" data-tip="satis" title="Detay için tıklayın" onclick="handleCellClick(this)">${formatTutar(toplam.satis)}${bolgeKalanHtml(toplam.bolge_kalan, toplam.bolge_tutar)}</td>`;
                     
                     cols.forEach(col => {
                         footHtml += `<td class="text-end clickable-cell" data-tip="odeme_tipi" data-odeme-tipi-id="${col.id}" data-odeme-tipi="${col.ad}" title="Detay için tıklayın" onclick="handleCellClick(this)">${formatTutar(colTotals[col.id] ?? 0)}</td>`;
