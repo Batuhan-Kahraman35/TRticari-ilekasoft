@@ -249,7 +249,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 $id = $_POST['id'] ?? 0;
-                
+
+                // HalkÖde ile tahsilat alınmış sözleşme silinemez; ödenmemiş linkler birlikte silinir
+                if ($db->fetchOne("SELECT 1 AS var FROM Halkode_Odeme_Linkleri WHERE Halkode_Odeme_Linkleri_Sozlesme_id = ? AND Halkode_Odeme_Linkleri_Odeme_id IS NOT NULL", [$id])) {
+                    echo json_encode(['success' => false, 'message' => 'Bu sözleşmeye HalkÖde ile kredi kartı tahsilatı yapılmış, silinemez.']);
+                    break;
+                }
+                $db->execute("DELETE FROM Halkode_Odeme_Linkleri WHERE Halkode_Odeme_Linkleri_Sozlesme_id = ?", [$id]);
+
                 // Stok hareketlerini sil (CASCADE ile otomatik silinmeli ama guvenlik icin)
                 $db->execute("DELETE FROM Sozlesme_StokHareketleri WHERE hareket_sozlesme_id = ?", [$id]);
                 

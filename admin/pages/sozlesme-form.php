@@ -523,12 +523,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 
-                // Listede olmayan ödemeleri sil
+                // Listede olmayan ödemeleri sil. HalkÖde ile alınan ödemeler hariç:
+                // form açıkken webhook satır eklemiş olabilir, formda görünmese de silinmez.
+                $halkodeHaric = " AND odeme_id NOT IN (SELECT Halkode_Odeme_Linkleri_Odeme_id FROM Halkode_Odeme_Linkleri WHERE Halkode_Odeme_Linkleri_Odeme_id IS NOT NULL)";
                 if (!empty($mevcutOdemeids)) {
                     $placeholders = implode(',', array_fill(0, count($mevcutOdemeids), '?'));
-                    $db->execute("DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id = ? AND odeme_id NOT iN ($placeholders)", array_merge([$sozlesmeid], $mevcutOdemeids));
+                    $db->execute("DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id = ? AND odeme_id NOT iN ($placeholders)" . $halkodeHaric, array_merge([$sozlesmeid], $mevcutOdemeids));
                 } else {
-                    $db->execute("DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id = ?", [$sozlesmeid]);
+                    $db->execute("DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id = ?" . $halkodeHaric, [$sozlesmeid]);
                 }
                 
                 $odemeIndex = 0;
@@ -732,9 +734,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit;
                 }
                 
+                // HalkÖde ile alınan ödeme silinemez (gerçek tahsilat, link kaydına bağlı)
+                if ($db->fetchOne("SELECT 1 AS var FROM Halkode_Odeme_Linkleri WHERE Halkode_Odeme_Linkleri_Odeme_id = ?", [$odemeid])) {
+                    echo json_encode(['success' => false, 'message' => 'Bu ödeme HalkÖde ile kredi kartından tahsil edildi, silinemez.']);
+                    exit;
+                }
+
                 // Ödeme bilgisini al (dosya silmek ve log için)
                 $eskiOdeme = $db->fetchOne("SELECT * FROM Sozlesme_Odemeler WHERE odeme_id = ?", [$odemeid]);
-                
+
                 // Log kaydı oluştur (silme)
                 logKayitDegisiklikleri($db, 'sozlesme-form', 'Sozlesme_Odemeler', $odemeid, $eskiOdeme, null, $user['kullanici_id'], 'Ödeme silindi');
                 
@@ -1344,6 +1352,17 @@ $pageTitle = $isEdit ? 'Sözleşme Düzenle' : 'Yeni Sözleşme';
                                     <i class="bi bi-credit-card-2-front"></i> Ödeme Yöntemleri
                                 </h5>
                                 <div class="card-tools">
+                                    <?php
+                                    // HalkÖde ödeme linki: kayıtlı sözleşmede ve sayfada ekleme yetkisi varsa
+                                    $halkodeYetki = $isEdit
+                                        ? PageAuth::checkPagePermissions($user['kullanici_id'], $user['departman_id'], 'halkode-odeme-linkleri.php')
+                                        : [];
+                                    ?>
+                                    <?php if (!empty($halkodeYetki['can_add'])): ?>
+                                    <a href="halkode-odeme-linkleri.php?sozlesme_id=<?= (int)$editid ?>" target="_blank" class="btn btn-sm btn-outline-success me-1" title="Müşteriye kredi kartı ödeme linki gönder">
+                                        <i class="bi bi-credit-card"></i> Ödeme Linki
+                                    </a>
+                                    <?php endif; ?>
                                     <button type="button" class="btn btn-sm btn-primary" onclick="addOdemeRow()">
                                         <i class="bi bi-plus"></i> Satır Ekle
                                     </button>

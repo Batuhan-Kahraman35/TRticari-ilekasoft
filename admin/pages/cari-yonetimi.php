@@ -140,6 +140,8 @@ function cariKademeliSil($db, $cariid, $kullaniciId) {
         ["UPDATE BankaHesapHareketleri SET hareket_odeme_id = NULL, hareket_islendi = 0, GuncelleyenKullanici = ?, GuncellemeTarihi = GETDATE()
           WHERE hareket_odeme_id IN ($odemeAlt)", [$kullaniciId, $cariid]],
         ["UPDATE BankaHesapHareketleri SET hareket_oneri_cari_id = NULL WHERE hareket_oneri_cari_id = ?", [$cariid]],
+        // HalkÖde link kayıtları ödemelere ve sözleşmelere bağlı, önce silinir
+        ["DELETE FROM Halkode_Odeme_Linkleri WHERE Halkode_Odeme_Linkleri_Cari_id = ?", [$cariid]],
         ["DELETE FROM Sozlesme_Odemeler WHERE odeme_sozlesme_id IN ($sozAlt)", [$cariid]],
         ["DELETE FROM Sozlesme_StokHareketleri WHERE hareket_sozlesme_id IN ($sozAlt)", [$cariid]],
         ["DELETE FROM Sozlesmeler WHERE sozlesme_cari_id = ?", [$cariid]],
