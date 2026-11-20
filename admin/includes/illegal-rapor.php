@@ -44,8 +44,8 @@ $sorumlulukAktif = !$illegalRaporSatildi;
 /** Sorumlu olarak atanabilecek kullanicilarin departmanlari (SAHA SATIS, MUDUR) */
 const SORUMLU_DEPARTMANLARI = [10, 22];
 
-/** Atama ve bildirim yetkisi olan departmanlar (Bilgi Islem, Mudur) */
-const ATAMA_DEPARTMANLARI = [1, 22];
+/** Atama ve bildirim yetkisi olan departmanlar (Bilgi Islem, Muhasebe, Mudur) */
+const ATAMA_DEPARTMANLARI = [1, 9, 22];
 
 /** Bildirim loglarinin EntegrasyonLoglari icinde tanindigi konu basligi */
 const BILDIRIM_KONUSU = 'Sorumluluk Alanı Bildirimi';
